@@ -1,283 +1,603 @@
-#pragma once
-
-#include <ESP8266WebServer.h>
-#include <string>
-#include <map>
-#include <EEPROM.h>
+#include "ArduinoJson.h"
 #include "index.h"
+#include <EEPROM.h>
+#include <WebServer.h>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
 
-struct ConfigType
-{
-  const String type;
-  int size;
+#define string String
 
-  String (*serialize)(void *value);
-  void (*deserialize)(String value, void *target);
+#define FOR_EACH_END(action, ...) __VA_ARGS__;
+#define FOR_EACH_1(action, a, ...) action(a) FOR_EACH_END(action, __VA_ARGS__)
+#define FOR_EACH_2(action, a, ...) action(a) FOR_EACH_1(action, __VA_ARGS__)
+#define FOR_EACH_3(action, a, ...) action(a) FOR_EACH_2(action, __VA_ARGS__)
+#define FOR_EACH_4(action, a, ...) action(a) FOR_EACH_3(action, __VA_ARGS__)
+#define FOR_EACH_5(action, a, ...) action(a) FOR_EACH_4(action, __VA_ARGS__)
+#define FOR_EACH_6(action, a, ...) action(a) FOR_EACH_5(action, __VA_ARGS__)
+#define GET_MACRO(_1, _2, _3, _4, _5, _6, _7, NAME, ...) NAME
+#define FOR_EACH(action, ...)                                                  \
+    GET_MACRO(__VA_ARGS__, FOR_EACH_6, FOR_EACH_5, FOR_EACH_4, FOR_EACH_3,     \
+              FOR_EACH_2, FOR_EACH_1, FOR_EACH_END)(action, __VA_ARGS__)
+
+using f64 = double;
+
+void config_manager_log(const String& message) {
+    Serial.println("[ConfigManager]: " + message);
+}
+
+enum class ConfigFieldType {
+    intType,
+    floatType,
+    stringType,
+    boolType,
+    buttonType,
 };
 
-const struct ConfigType intOption = {"int", sizeof(int), [](void *value)
-                                     { return String(*(int *)value); },
-                                     [](String value, void *target)
-                                     {
-                                       *(int *)target = value.toInt();
-                                     }};
+String config_field_type_to_string(ConfigFieldType type) {
+    switch (type) {
+    case ConfigFieldType::intType:
+        return "int";
+    case ConfigFieldType::floatType:
+        return "float";
+    case ConfigFieldType::stringType:
+        return "string";
+    case ConfigFieldType::boolType:
+        return "bool";
+    case ConfigFieldType::buttonType:
+        return "button";
+    }
+    return "unknown";
+}
 
-const struct ConfigType boolOption = {"bool", sizeof(bool), [](void *value)
-                                      { return (*(bool *)value) ? String("true") : String("false"); },
-                                      [](String value, void *target)
-                                      {
-                                        if (value == "true")
-                                          *(bool *)target = true;
-                                        else
-                                          *(bool *)target = false;
-                                      }};
+uint64_t config_field_type_id(ConfigFieldType type) {
+    switch (type) {
+    case ConfigFieldType::intType:
+        return 10;
+    case ConfigFieldType::floatType:
+        return 11;
+    case ConfigFieldType::stringType:
+        return 12;
+    case ConfigFieldType::boolType:
+        return 13;
+    case ConfigFieldType::buttonType:
+        return 14;
+    }
+    return 5;
+}
 
-const struct ConfigType stringOption = {"string", sizeof(int), [](void *value)
-                                        { return String(*(String *)value); },
-                                        [](String value, void *target)
-                                        {
-                                          *(String *)target = String(value);
-                                        }};
-
-#ifndef CONFIG
-#define CONFIG \
-  S(name)      \
-  X(int, test)
-#endif
-
-const std::map<std::string, const ConfigType *> options = {
-#define X(type, name) {#name, &type##Option},
-#define S(name) {#name, &stringOption},
+#define FIELD(type, name, ...) type name;
+#define BUTTON(name, ...)
+struct Config {
     CONFIG
-#undef X
-#undef S
+};
+#undef FIELD
+#undef BUTTON
+
+struct ButtonEvents {
+    void (*on_click)(Config* current_config, Config* new_config) = nullptr;
 };
 
-const char *jsonOptions =
-    "["
-#define X(type, name) "{\"name\": \"" #name "\", \"type\": \"" #type "\"},"
-#define S(name) "{\"name\": \"" #name "\", \"type\": \"string\"},"
+#define FIELD(...)
+#define BUTTON(name, ...) ButtonEvents name;
+struct Buttons {
     CONFIG
-#undef X
-#undef S
-    "{}"
-    "]";
+};
+#undef FIELD
+#undef BUTTON
 
-struct Config
-{
-#define X(type, name) type name;
-#define S(name) String name;
-  CONFIG
-#undef S
-#undef X
+#define FIELD(...)
+#define BUTTON(button_name, ...)                                               \
+    if (strcmp(name, #button_name) == 0) {                                     \
+        return &buttons->button_name;                                          \
+    }
+ButtonEvents* config_get_button_events(Buttons* buttons, const char* name) {
+    CONFIG
+    return nullptr;
+}
+#undef FIELD
+#undef BUTTON
+
+struct ConfigFieldOptions {
+    f64 min = -INFINITY;
+    f64 max = INFINITY;
+    f64 step = 1;
+    const char* title = nullptr;
+    const char* description = nullptr;
+    bool dont_save = false;
+
+    ConfigFieldOptions(void (*init)(ConfigFieldOptions* options)) {
+        init(this);
+    }
 };
 
-Config readConfig()
-{
-  Config config;
-  int offset = sizeof(size_t);
+struct ConfigField {
+    const char* name;
+    const ConfigFieldType type;
+    const ConfigFieldOptions options;
+};
 
-#define X(type, name)                \
-  {                                  \
-    EEPROM.get(offset, config.name); \
-    offset += sizeof(type);          \
-  }
+#define SET_OPTION(setter) options->setter;
+#define FIELD(field_type, field_name, ...)                                     \
+    {.name = #field_name,                                                      \
+     .type = ConfigFieldType::field_type##Type,                                \
+     .options = ConfigFieldOptions([](ConfigFieldOptions* options) {           \
+         FOR_EACH(SET_OPTION, __VA_ARGS__)                                     \
+     })},
+#define BUTTON(button_name, ...)                                               \
+    {.name = #button_name,                                                     \
+     .type = ConfigFieldType::buttonType,                                      \
+     .options = ConfigFieldOptions([](ConfigFieldOptions* options) {           \
+         FOR_EACH(SET_OPTION, __VA_ARGS__)                                     \
+     })},
 
-#define S(name)                                     \
-  {                                                 \
-    int len = 0;                                    \
-    EEPROM.get(offset, len);                        \
-    offset += sizeof(int);                          \
-    for (int i = 0; i < len; i++)                   \
-    {                                               \
-      config.name += (char)EEPROM.read(offset + i); \
-    }                                               \
-    offset += len;                                  \
-  }
+const ConfigField configFields[] = {CONFIG};
+#undef FIELD
+#undef BUTTON
 
-  CONFIG
+#define FIELD(field_type, field_name, ...)                                     \
+    if (strcmp(name, #field_name) == 0) {                                      \
+        return (void*)&config->field_name;                                     \
+    }
+#define BUTTON(name, ...)
 
-#undef X
-#undef S
+void* config_get_ptr(Config* config, const char* name) {
+    CONFIG
 
-  return config;
+    return nullptr;
+}
+#undef FIELD
+#undef BUTTON
+
+uint64_t simple_hash(uint64_t key) {
+    // FNV-1a inspired constants
+    const uint64_t prime = 0x100000001b3;
+    const uint64_t offset = 0xcbf29ce484222325;
+
+    // Mix the bits using XOR, multiplication, shifts and rotations
+    uint64_t hash = offset;
+
+    // Split the key and mix in chunks to improve distribution
+    hash ^= (key & 0xFFFFFFFF);
+    hash *= prime;
+    hash ^= (key >> 32);
+    hash *= prime;
+
+    // Additional avalanche step to improve bit distribution
+    hash ^= hash >> 23;
+    hash *= 0x2127599bf4325c37ULL;
+    hash ^= hash >> 47;
+
+    return hash;
 }
 
-void writeConfig(const Config &config)
-{
-  int offset = sizeof(size_t);
+uint64_t config_hash(const Config* config) {
+    uint64_t hash = 0;
+    for (auto& field : configFields) {
+        if (field.options.dont_save) {
+            continue;
+        }
 
-#define X(type, name)                \
-  {                                  \
-    EEPROM.put(offset, config.name); \
-    offset += sizeof(type);          \
-  }
+        if (field.type == ConfigFieldType::buttonType) {
+            continue;
+        }
 
-#define S(name)                                 \
-  {                                             \
-    int len = config.name.length();             \
-    EEPROM.put(offset, len);                    \
-    offset += sizeof(int);                      \
-    for (int i = 0; i < len; i++)               \
-    {                                           \
-      EEPROM.write(offset + i, config.name[i]); \
-    }                                           \
-    offset += len;                              \
-  }
-  CONFIG
-#undef X
-#undef S
-
-  EEPROM.commit();
+        hash =
+            simple_hash(hash + simple_hash(config_field_type_id(field.type)));
+    }
+    return hash;
 }
 
-String serializeConfig(Config &config)
-{
-  String result = "{";
-
-#define X(type, name) \
-  result += "\"" #name "\": " + type##Option.serialize(&config.name) + ", ";
-#define S(name) \
-  result += "\"" #name "\": \"" + config.name + "\", ";
-
-  CONFIG
-
-#undef X
-#undef S
-
-  result.remove(result.length() - 2);
-  result += "}";
-  return result;
+// Function to convert ConfigFieldOptions to JSON using JsonDocument
+static String config_options_to_json(ConfigFieldOptions* options) {
+    JsonDocument doc;
+    if (options->min != -INFINITY) {
+        doc["min"] = options->min;
+    }
+    if (options->max != INFINITY) {
+        doc["max"] = options->max;
+    }
+    doc["step"] = options->step;
+    if (options->description != nullptr) {
+        doc["description"] = options->description;
+    }
+    if (options->title != nullptr) {
+        doc["title"] = options->title;
+    }
+    if (options->dont_save) {
+        doc["dont_save"] = options->dont_save;
+    }
+    String json;
+    serializeJson(doc, json);
+    return json;
 }
 
-Config parseConfig(String &config)
-{
-  Config result;
-  std::map<std::string, void *> values;
+// Function to convert Config to JSON using JsonDocument
+static String config_to_json(Config* config) {
+    JsonDocument doc;
+    JsonArray array = doc.to<JsonArray>();
 
-#define X(type, name) values[#name] = &result.name;
-#define S(name) values[#name] = &result.name;
-  CONFIG
-#undef X
-#undef S
+    int config_fields = sizeof(configFields) / sizeof(ConfigField);
+    for (int i = 0; i < config_fields; i++) {
+        JsonObject field = array.add<JsonObject>();
+        field["name"] = configFields[i].name;
+        field["type"] = config_field_type_to_string(configFields[i].type);
 
-  unsigned int index = 0;
-  while (config.indexOf("\"", index) != -1)
-  {
-    int nameStart = config.indexOf("\"", index) + 1;
-    int nameEnd = config.indexOf("\"", nameStart);
-    std::string name = std::string(config.substring(nameStart, nameEnd).c_str());
+        void* field_ptr = config_get_ptr(config, configFields[i].name);
+        if (field_ptr) {
+            switch (configFields[i].type) {
+            case ConfigFieldType::intType: {
+                field["value"] = *static_cast<int*>(field_ptr);
+                break;
+            }
+            case ConfigFieldType::floatType: {
+                field["value"] = *static_cast<float*>(field_ptr);
+                break;
+            }
+            case ConfigFieldType::stringType: {
+                field["value"] = *static_cast<String*>(field_ptr);
+                break;
+            }
+            case ConfigFieldType::boolType: {
+                field["value"] = *static_cast<bool*>(field_ptr);
+                break;
+            }
+            case ConfigFieldType::buttonType: {
+                // Buttons don't store values
+                break;
+            }
+            }
+        }
 
-    auto configType = options.find(name)->second;
-
-    int valueStart, valueEnd;
-    String value;
-
-    if (configType->type == "string")
-    {
-
-      valueStart = config.indexOf("\"", nameEnd + 1) + 1;
-      valueEnd = config.indexOf("\"", valueStart);
-      value = config.substring(valueStart, valueEnd);
-    }
-    else
-    {
-      valueStart = config.indexOf(":", nameEnd + 1) + 1;
-      valueEnd = config.indexOf(",", valueStart);
-      valueEnd = valueEnd == -1 ? config.indexOf("}", valueStart) : valueEnd;
-      value = config.substring(valueStart, valueEnd);
-      value.trim();
-    }
-
-    if (values.find(name) != values.end())
-    {
-      configType->deserialize(value, values[name]);
+        field["options"] = serialized(config_options_to_json(
+            (ConfigFieldOptions*)&configFields[i].options));
     }
 
-    index = valueEnd + 1;
-  }
-
-  return result;
+    String json;
+    serializeJson(doc, json);
+    return json;
 }
 
-class ESPConfigManager
-{
-private:
-  ESP8266WebServer server;
+static void config_load_from_json(Config* config, const JsonObject& json_obj) {
+    for (JsonPair kv : json_obj) {
+        const char* key = kv.key().c_str();
 
-  const char *m_username;
-  const char *m_password;
+        // Find matching config field
+        for (auto& field : configFields) {
+            if (strcmp(field.name, key) != 0)
+                continue;
 
-  Config currentConfig;
+            void* field_ptr = config_get_ptr(config, key);
+            if (!field_ptr)
+                break;
 
-public:
-  ESPConfigManager(const Config &defaultConfig, const char *username, const char *password, const size_t eepromSize = 1024)
-  {
-    m_username = username;
-    m_password = password;
-    EEPROM.begin(eepromSize);
-
-    size_t shemaHash = std::hash<std::string>{}(jsonOptions);
-
-    size_t currentHash;
-    EEPROM.get(0, currentHash);
-
-    if (currentHash != shemaHash)
-    {
-      EEPROM.put(0, shemaHash);
-      writeConfig(defaultConfig);
-      currentConfig = defaultConfig;
-    }
-
-    currentConfig = readConfig();
-
-    server.on("/", HTTP_GET, [this]()
-              { 
-                if (!server.authenticate(m_username, m_password)) {
-                  return server.requestAuthentication();
+            switch (field.type) {
+            case ConfigFieldType::intType: {
+                if (kv.value().is<int>()) {
+                    int val = kv.value().as<int>();
+                    if (field.options.min != 0 || field.options.max != 0) {
+                        val = constrain(val, field.options.min,
+                                        field.options.max);
+                    }
+                    *static_cast<int*>(field_ptr) = val;
+                } else {
+                    config_manager_log(
+                        ("Invalid value for field " + String(key)).c_str());
                 }
-                server.send(200, "text/html", IndexPage); });
+                break;
+            }
+            case ConfigFieldType::floatType: {
+                if (kv.value().is<double>()) {
+                    double val = kv.value().as<double>();
+                    if (field.options.min != 0 || field.options.max != 0) {
+                        val = constrain(val, field.options.min,
+                                        field.options.max);
+                    }
+                    *static_cast<float*>(field_ptr) = (float)val;
+                } else {
+                    config_manager_log(
+                        ("Invalid value for field " + String(key)).c_str());
+                }
+                break;
+            }
+            case ConfigFieldType::stringType: {
+                if (kv.value().is<const char*>()) {
+                    *static_cast<String*>(field_ptr) =
+                        kv.value().as<const char*>();
+                } else {
+                    config_manager_log(
+                        ("Invalid value for field " + String(key)).c_str());
+                }
+                break;
+            }
+            case ConfigFieldType::boolType: {
+                if (kv.value().is<bool>()) {
+                    *static_cast<bool*>(field_ptr) = kv.value().as<bool>();
+                } else {
+                    config_manager_log(
+                        ("Invalid value for field " + String(key)).c_str());
+                }
+                break;
+            }
+            case ConfigFieldType::buttonType: {
+                // Buttons don't store values
+                break;
+            }
+            }
+            break;
+        }
+    }
+}
 
-    server.on("/configSchema", HTTP_GET, [this]()
-              {
-                // if (!server.authenticate(m_username, m_password)) {
-                //   return server.requestAuthentication();
-                // }
-                server.send(200, "application/json", jsonOptions); });
+static bool config_write_to_eeprom(Config* config) {
+    uint64_t hash = config_hash(config);
+    EEPROM.put(0, hash);
+    int offset = sizeof(hash);
 
-    server.on("/config", HTTP_GET, [this]()
-              {
-    // if (!server.authenticate(m_username, m_password)) {
-    //   return server.requestAuthentication();
-    // }
-              auto config = readConfig();
-              server.send(200, "application/json", serializeConfig(config)); });
+    config_manager_log("Writing configuration to EEPROM");
 
-    server.on("/config", HTTP_POST, [this]()
-              {
+    for (auto& field : configFields) {
+        void* field_ptr = config_get_ptr(config, field.name);
+        if (!field_ptr) {
+            continue;
+        }
 
-    // if (!server.authenticate(m_username, m_password)) {
-    //   return server.requestAuthentication();
-    // }
-              auto requestBody = server.arg("plain");
-              auto config = parseConfig(requestBody);
-              writeConfig(config);
-              currentConfig = config;
-              server.send(200, "application/json", serializeConfig(config)); });
-  }
+        if (field.options.dont_save) {
+            continue;
+        }
 
-  void start()
-  {
-    server.begin();
-  }
+        switch (field.type) {
+        case ConfigFieldType::intType: {
+            EEPROM.put(offset, *static_cast<int*>(field_ptr));
+            offset += sizeof(int);
+            break;
+        }
+        case ConfigFieldType::floatType: {
+            EEPROM.put(offset, *static_cast<float*>(field_ptr));
+            offset += sizeof(float);
+            break;
+        }
+        case ConfigFieldType::stringType: {
+            String str = *static_cast<String*>(field_ptr);
+            int len = str.length();
+            EEPROM.put(offset, len);
+            offset += sizeof(int);
+            for (int i = 0; i < len; i++) {
+                EEPROM.put(offset + i, str[i]);
+            }
+            offset += len;
+            break;
+        }
+        case ConfigFieldType::boolType: {
+            EEPROM.put(offset, *static_cast<bool*>(field_ptr));
+            offset += sizeof(bool);
+            break;
+        }
+        case ConfigFieldType::buttonType: {
+            // Buttons don't store values
+            break;
+        }
+        }
+    }
 
-  void handle()
-  {
-    server.handleClient();
-  }
+    EEPROM.commit();
 
-  const Config &getConfig()
-  {
-    return currentConfig;
-  }
+    return true;
+}
+
+static bool config_load_from_eeprom(Config* config) {
+    config_manager_log("Loading configuration from EEPROM");
+
+    uint64_t hash;
+    EEPROM.get(0, hash);
+    if (hash != config_hash(config)) {
+        config_manager_log("Configuration hash mismatch");
+        return false;
+    }
+    int offset = sizeof(hash);
+
+    for (auto& field : configFields) {
+        void* field_ptr = config_get_ptr(config, field.name);
+        if (!field_ptr) {
+            continue;
+        }
+
+        if (field.options.dont_save) {
+            continue;
+        }
+
+        switch (field.type) {
+        case ConfigFieldType::intType: {
+            EEPROM.get(offset, *static_cast<int*>(field_ptr));
+            offset += sizeof(int);
+            break;
+        }
+
+        case ConfigFieldType::floatType: {
+            EEPROM.get(offset, *static_cast<float*>(field_ptr));
+            offset += sizeof(float);
+            break;
+        }
+
+        case ConfigFieldType::stringType: {
+            int len;
+            EEPROM.get(offset, len);
+            offset += sizeof(int);
+            String str;
+            for (int i = 0; i < len; i++) {
+                char c;
+                EEPROM.get(offset + i, c);
+                str += c;
+            }
+            *static_cast<String*>(field_ptr) = str;
+            offset += len;
+            break;
+        }
+        case ConfigFieldType::boolType: {
+            EEPROM.get(offset, *static_cast<bool*>(field_ptr));
+            offset += sizeof(bool);
+            break;
+        }
+        case ConfigFieldType::buttonType: {
+            // Buttons don't store values
+            break;
+        }
+        }
+    }
+
+    return true;
+}
+
+void config_save_builtin(Config* current_config, Config* new_config) {
+    *current_config = *new_config;
+    bool result = config_write_to_eeprom(current_config);
+    if (!result) {
+        config_manager_log("Failed to save configuration to EEPROM");
+    }
+}
+
+class ESPConfigManager {
+    WebServer server;
+
+    const char* username = nullptr;
+    const char* password = nullptr;
+    bool authenticate = false;
+
+  public:
+    ESPConfigManager() {};
+    Config config = {};
+    Buttons buttons = {};
+
+    bool init(Config defaultConfig, const char* username, const char* password,
+              const size_t eeprom_size = 1024) {
+        this->username = username;
+        this->password = password;
+
+        this->authenticate = strlen(username) > 0 && strlen(password) > 0;
+
+        bool result = EEPROM.begin(eeprom_size);
+        if (!result) {
+            config_manager_log("Failed to initialize EEPROM");
+            return false;
+        }
+
+        uint64_t stored_hash;
+        EEPROM.get(0, stored_hash);
+        uint64_t hash = config_hash((Config*)nullptr);
+        config_manager_log("Stored hash: " + String(stored_hash));
+        config_manager_log("Calculated hash: " + String(hash));
+        if (stored_hash != hash) {
+            config_manager_log("Configuration hash mismatch, setting defaults");
+            bool result = config_write_to_eeprom(&defaultConfig);
+            if (!result) {
+                config_manager_log("Failed to write default configuration");
+                return false;
+            }
+            this->config = defaultConfig;
+        } else {
+            bool result = config_load_from_eeprom(&this->config);
+            if (!result) {
+                config_manager_log("Failed to load configuration from EEPROM");
+                return false;
+            }
+            config_manager_log("Configuration loaded from EEPROM");
+        }
+
+        return true;
+    }
+
+    void start() {
+        // Setup the server
+        server.on("/", HTTP_GET, [this]() {
+            if (this->authenticate &&
+                !server.authenticate(this->username, this->password)) {
+                return server.requestAuthentication();
+            }
+            server.send(200, "text/html", IndexPage);
+        });
+
+        server.on("/config", HTTP_GET, [this]() {
+            if (this->authenticate &&
+                !server.authenticate(this->username, this->password)) {
+                return server.requestAuthentication();
+            }
+            server.send(200, "application/json", config_to_json(&this->config));
+        });
+
+        server.on("/event", HTTP_OPTIONS, [this]() {
+            if (this->authenticate &&
+                !server.authenticate(this->username, this->password)) {
+                return server.requestAuthentication();
+            }
+            server.sendHeader("Access-Control-Allow-Methods", "POST");
+            server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+            server.send(200, "application/json", "{}");
+        });
+
+        server.on("/event", HTTP_POST, [this]() {
+            if (this->authenticate &&
+                !server.authenticate(this->username, this->password)) {
+                return server.requestAuthentication();
+            }
+
+            // Accepts an object of the form: {"name"; "button_name", "event":
+            // "click", "config": {...}}
+
+            JsonDocument doc;
+            DeserializationError error =
+                deserializeJson(doc, server.arg("plain"));
+            if (error) {
+                server.send(400, "application/json",
+                            "{\"error\": \"Invalid JSON\"}");
+                return;
+            }
+
+            if (!doc["name"].is<JsonString>() ||
+                !doc["event"].is<JsonString>() ||
+                !doc["config"].is<JsonObject>()) {
+                server.send(400, "application/json",
+                            "{\"error\": \"Invalid required keys\"}");
+                return;
+            }
+
+            const String name = doc["name"];
+            const String event = doc["event"];
+
+            if (event != "click") {
+                server.send(400, "application/json",
+                            "{\"error\": \"Invalid event\"}");
+                return;
+            }
+
+            ButtonEvents* events =
+                config_get_button_events(&this->buttons, name.c_str());
+
+            if (events == nullptr) {
+                server.send(400, "application/json",
+                            "{\"error\": \"Invalid button name\"}");
+                return;
+            }
+
+            if (events->on_click) {
+                Config new_config = {};
+
+                config_load_from_json(&new_config, doc["config"]);
+
+                events->on_click(&this->config, &new_config);
+            } else {
+                config_manager_log("No event handler for button " + name);
+            }
+
+            server.send(200, "application/json", config_to_json(&this->config));
+        });
+
+        server.begin();
+    }
+
+    void handle() { server.handleClient(); }
+
+    void save() { config_save_builtin(&this->config, &this->config); }
 };
+
+#undef string
