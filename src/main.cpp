@@ -56,9 +56,6 @@
 //
 // Zvysok vysvetlenia pokracuje v komentaroch v kode.
 
-const char* ssid = "ssid";
-const char* password = "pass";
-
 // Toto je ukazkova definicia configu
 #define CONFIG                                                                 \
     FIELD(int, id, )                                                           \
@@ -66,6 +63,8 @@ const char* password = "pass";
           description = "This is the most awesome port", )                     \
     FIELD(float, some_float, min = 0.0, max = 100.0, step = 0.1,               \
           title = "Some float", )                                              \
+    FIELD(float, other_float, min = 0.0, max = 100.0, step = 0.1,              \
+          title = "Other float", hide_slider = true, )                         \
     FIELD(bool, some_bool, title = "Some bool",                                \
           description = "More information about this option", )                \
     FIELD(string, some_string, title = "Some string", )                        \
@@ -74,7 +73,7 @@ const char* password = "pass";
           description = "Some data to log to the serial", dont_save = true, )  \
     BUTTON(log_data, title = "Log data", )
 // Vsimnime si ze tento include musi nasledovat za definiciou configu
-#include "ESPConfigManager.h"
+#include <ESPConfigManager.h>
 
 ESPConfigManager configManager;
 
@@ -105,6 +104,9 @@ void log_data_on_click(Config* current_config, Config* new_config) {
     // vyzeralo takto: *current_config = *new_config;
     Serial.println(new_config->data_to_log);
 }
+
+const char* ssid = "ssid";
+const char* password = "pass";
 
 void setup() {
     // Najprv inicializujeme serial, aby sme mohli vydiet vsetky chybove hlasky

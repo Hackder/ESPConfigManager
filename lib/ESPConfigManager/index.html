@@ -69,6 +69,7 @@
 
       if (field.type === 'int' || field.type === 'float') {
         const hasRange = field.options.min !== undefined && field.options.max !== undefined;
+        const hasSlider = hasRange && !field.options.hide_slider;
         const numericChange = (value) => {
           if (field.type === 'int') {
             value = parseInt(value);
@@ -82,10 +83,10 @@
           hasRange && h('small', {class: 'pico-color-grey-500'}, ` (${field.options.min} - ${field.options.max})`),
           h('input', {
             type: 'number', name: field.name, min: field.options.min, max: field.options.max, step: field.options.step, value: field.value,
-            style: hasRange ? 'margin-bottom: 0' : '',
+            style: hasSlider ? 'margin-bottom: 0' : '',
             onchange: (e) => numericChange(e.target.value)
           }),
-          hasRange && h('input', {
+          hasSlider && h('input', {
             type: 'range', name: field.name, min: field.options.min, max: field.options.max, step: field.options.step, value: field.value,
             sytle: 'margin-bottom: var(--pico-spacing)',
             oninput: (e) => numericChange(e.target.value)

@@ -103,6 +103,7 @@ struct ConfigFieldOptions {
     f64 min = -INFINITY;
     f64 max = INFINITY;
     f64 step = 1;
+    bool hide_slider = false;
     const char* title = nullptr;
     const char* description = nullptr;
     bool dont_save = false;
@@ -199,6 +200,9 @@ static String config_options_to_json(ConfigFieldOptions* options) {
         doc["max"] = options->max;
     }
     doc["step"] = options->step;
+    if (options->hide_slider) {
+        doc["hide_slider"] = options->hide_slider;
+    }
     if (options->description != nullptr) {
         doc["description"] = options->description;
     }
@@ -595,9 +599,13 @@ class ESPConfigManager {
         server.begin();
     }
 
-    void handle() { server.handleClient(); }
+    void handle() {
+        server.handleClient();
+    }
 
-    void save() { config_save_builtin(&this->config, &this->config); }
+    void save() {
+        config_save_builtin(&this->config, &this->config);
+    }
 };
 
 #undef string
