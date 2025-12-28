@@ -1,4 +1,5 @@
 #include "Arduino.h"
+#include "ssid_pass.h"
 #include <WiFi.h>
 
 // Toto je nova specifikacia konfiguracie. Funguje takto:
@@ -105,13 +106,13 @@ void log_data_on_click(Config* current_config, Config* new_config) {
     Serial.println(new_config->data_to_log);
 }
 
-const char* ssid = "ssid";
-const char* password = "pass";
+const char* ssid = SSID;
+const char* password = PASSWORD;
 
 void setup() {
     // Najprv inicializujeme serial, aby sme mohli vydiet vsetky chybove hlasky
     // (ak by nejake boli) z config manageru
-    Serial.begin(9600);
+    Serial.begin(115200);
 
     // Potom inicializujeme config manager. Nechal som username ako prazdny
     // string, teda som akokeby vypol prihlasenie. Teda uz otvorenie config
@@ -154,7 +155,7 @@ void setup() {
     Serial.println(WiFi.localIP());
 
     // Tymto riadkom zapneme webserver ktory bude cakat a odpovedat klientom
-    configManager.start();
+    // configManager.start();
 
     // ---------------------------------------------------------------------
     // !! Nasleduje ukazka pouzivania. Toto netreba davat do setupu. Je to len
@@ -169,6 +170,10 @@ void setup() {
     configManager.save();
 }
 
+long lastMillis = 0;
 void loop() {
-    configManager.handle();
+    if (millis() - lastMillis > 1000) {
+        lastMillis = millis();
+        Serial.println(configManager.config.id);
+    }
 }
