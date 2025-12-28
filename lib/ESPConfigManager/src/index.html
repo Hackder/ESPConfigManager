@@ -434,21 +434,82 @@
         const [logs, setLogs] = useState([]);
         const listRef = useRef(null);
         const [autoScroll, setAutoScroll] = useState(true);
+        const [connected, setConnected] = useState(false);
+        const connectedRef = useRef(false);
 
         useEffect(() => {
-          const es = new EventSource(baseUrl + "/logs");
+          let es;
           let buffer = [];
+          let retryTimeout;
+          let heartbeatInterval;
 
-          es.onmessage = (e) => {
-            buffer.push({
-              msg: e.data,
-              time: new Date().toLocaleTimeString(),
-            });
-          };
+          function handleDisconnect() {
+            if (es) {
+              es.close();
+              es = null;
+            }
+            setConnected(false);
 
-          es.onerror = (e) => {
-            // console.error("EventSource failed:", e);
-          };
+            if (connectedRef.current) {
+              buffer.push({
+                msg: "Disconnected from device. Retrying...",
+                time: new Date().toLocaleTimeString(),
+                isError: true,
+              });
+              connectedRef.current = false;
+            }
+
+            clearTimeout(retryTimeout);
+            retryTimeout = setTimeout(connect, 1000);
+          }
+
+          function connect() {
+            if (es) es.close();
+            es = new EventSource(baseUrl + "/logs");
+
+            es.onopen = () => {
+              setConnected(true);
+              if (!connectedRef.current) {
+                buffer.push({
+                  msg: "Connected to device.",
+                  time: new Date().toLocaleTimeString(),
+                  isSuccess: true,
+                });
+              }
+              connectedRef.current = true;
+            };
+
+            es.onmessage = (e) => {
+              buffer.push({
+                msg: e.data,
+                time: new Date().toLocaleTimeString(),
+              });
+            };
+
+            es.onerror = (e) => {
+              handleDisconnect();
+            };
+          }
+
+          connect();
+
+          // Heartbeat to detect disconnection faster than browser timeout
+          heartbeatInterval = setInterval(async () => {
+            if (!connectedRef.current) return;
+
+            try {
+              const controller = new AbortController();
+              const id = setTimeout(() => controller.abort(), 2000);
+              // Using GET request to minimize CORS issues, ignoring body
+              await fetch(baseUrl + "/health", {
+                method: "GET",
+                signal: controller.signal,
+              });
+              clearTimeout(id);
+            } catch (e) {
+              handleDisconnect();
+            }
+          }, 2000);
 
           const interval = setInterval(() => {
             if (buffer.length > 0) {
@@ -461,8 +522,10 @@
           }, 200);
 
           return () => {
-            es.close();
+            if (es) es.close();
+            clearTimeout(retryTimeout);
             clearInterval(interval);
+            clearInterval(heartbeatInterval);
           };
         }, []);
 
@@ -493,7 +556,22 @@
           h(
             "div",
             { class: "log-header" },
-            h("h3", null, "Device Logs"),
+            h(
+              "div",
+              { style: "display: flex; align-items: baseline;" },
+              h("h3", null, "Device Logs"),
+              h(
+                "small",
+                {
+                  style: `margin-left: 1rem; font-size: 0.75rem; font-weight: bold; color: ${
+                    connected
+                      ? "var(--pico-ins-color)"
+                      : "var(--pico-del-color)"
+                  }`,
+                },
+                connected ? "CONNECTED" : "DISCONNECTED",
+              ),
+            ),
             h(
               "div",
               { class: "log-controls" },
@@ -530,8 +608,23 @@
             logs.map((log, i) =>
               h(
                 "div",
-                { key: i, class: "log-entry" },
-                h("span", { class: "log-timestamp" }, log.time),
+                {
+                  key: i,
+                  class: "log-entry",
+                  style: log.isError
+                    ? "color: var(--pico-del-color)"
+                    : log.isSuccess
+                      ? "color: var(--pico-ins-color)"
+                      : "",
+                },
+                h(
+                  "span",
+                  {
+                    class: "log-timestamp",
+                    style: log.isError || log.isSuccess ? "color: inherit" : "",
+                  },
+                  log.time,
+                ),
                 log.msg,
               ),
             ),

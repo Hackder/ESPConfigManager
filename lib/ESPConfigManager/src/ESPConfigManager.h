@@ -527,6 +527,10 @@ class ESPConfigManager {
     void start() {
         server.addMiddleware(&this->cors);
 
+        server.on("/health", HTTP_GET, [](AsyncWebServerRequest* request) {
+            request->send(200, "text/plain", "OK");
+        });
+
         server
             .on("/", HTTP_GET,
                 [](AsyncWebServerRequest* request) {
@@ -542,17 +546,6 @@ class ESPConfigManager {
                                   config_to_json(&this->config));
                 })
             .addMiddleware(&this->auth);
-
-        // server
-        //     .on("/event", HTTP_OPTIONS,
-        //         [](AsyncWebServerRequest* request) {
-        //             request->sendHeader("Access-Control-Allow-Methods",
-        //             "POST");
-        //             request->sendHeader("Access-Control-Allow-Headers",
-        //                                 "Content-Type");
-        //             request->send(200, "application/json", "{}");
-        //         })
-        //     .addMiddleware(&this->auth);
 
         server
             .on("/event", HTTP_POST,
@@ -603,103 +596,6 @@ class ESPConfigManager {
             .addMiddleware(&this->auth);
 
         this->server.addHandler(&this->events);
-
-        // Setup the server
-        // server.on("/", HTTP_GET, [this]() {
-        //     if (this->authenticate &&
-        //         !server.authenticate(this->username, this->password)) {
-        //         return server.requestAuthentication();
-        //     }
-        //     server.send(200, "text/html", IndexPage);
-        // });
-        //
-        // server.on("/config", HTTP_GET, [this]() {
-        //     if (this->authenticate &&
-        //         !server.authenticate(this->username, this->password)) {
-        //         return server.requestAuthentication();
-        //     }
-        //     server.send(200, "application/json",
-        //     config_to_json(&this->config));
-        // });
-        //
-        // server.on("/event", HTTP_OPTIONS, [this]() {
-        //     if (this->authenticate &&
-        //         !server.authenticate(this->username, this->password)) {
-        //         return server.requestAuthentication();
-        //     }
-        //     server.sendHeader("Access-Control-Allow-Methods", "POST");
-        //     server.sendHeader("Access-Control-Allow-Headers",
-        //     "Content-Type"); server.send(200, "application/json", "{}");
-        // });
-        //
-        // server.on("/event", HTTP_POST, [this]() {
-        //     if (this->authenticate &&
-        //         !server.authenticate(this->username, this->password)) {
-        //         return server.requestAuthentication();
-        //     }
-        //
-        //     // Accepts an object of the form: {"name"; "button_name",
-        //     "event":
-        //     // "click", "config": {...}}
-        //
-        //     JsonDocument doc;
-        //     DeserializationError error =
-        //         deserializeJson(doc, server.arg("plain"));
-        //     if (error) {
-        //         server.send(400, "application/json",
-        //                     "{\"error\": \"Invalid JSON\"}");
-        //         return;
-        //     }
-        //
-        //     if (!doc["name"].is<JsonString>() ||
-        //         !doc["event"].is<JsonString>() ||
-        //         !doc["config"].is<JsonObject>()) {
-        //         server.send(400, "application/json",
-        //                     "{\"error\": \"Invalid required keys\"}");
-        //         return;
-        //     }
-        //
-        //     const String name = doc["name"];
-        //     const String event = doc["event"];
-        //
-        //     if (event != "click") {
-        //         server.send(400, "application/json",
-        //                     "{\"error\": \"Invalid event\"}");
-        //         return;
-        //     }
-        //
-        //     ButtonEvents* events =
-        //         config_get_button_events(&this->buttons, name.c_str());
-        //
-        //     if (events == nullptr) {
-        //         server.send(400, "application/json",
-        //                     "{\"error\": \"Invalid button name\"}");
-        //         return;
-        //     }
-        //
-        //     if (events->on_click) {
-        //         Config new_config = {};
-        //
-        //         config_load_from_json(&new_config, doc["config"]);
-        //
-        //         events->on_click(&this->config, &new_config);
-        //     } else {
-        //         config_manager_log("No event handler for button " +
-        //         name);
-        //     }
-        //
-        //     server.send(200, "application/json",
-        //     config_to_json(&this->config));
-        // });
-        //
-        // server.on("/logstream", HTTP_GET, [this]() {
-        //     if (this->authenticate &&
-        //         !server.authenticate(this->username, this->password)) {
-        //         return server.requestAuthentication();
-        //     }
-        // });
-        //
-        // server.begin();
 
         server.begin();
     }
