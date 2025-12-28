@@ -70,9 +70,6 @@
           description = "More information about this option", )                \
     FIELD(string, some_string, title = "Some string", )                        \
     BUTTON(save_config, title = "Save configuration", )                        \
-    FIELD(string, data_to_log, title = "Data to log",                          \
-          description = "Some data to log to the serial", dont_save = true, )  \
-    BUTTON(log_data, title = "Log data", )
 // Vsimnime si ze tento include musi nasledovat za definiciou configu
 #include <ESPConfigManager.h>
 
@@ -87,27 +84,8 @@ const Config defaultConfig = {
     .id = 10,
 };
 
-// Toto je funkcia ktora sa zavola ked stlacim tlacitko. To ze sa ma tato
-// zavolat je urcene v setupe. Funkcia dostane dva parametre. Prvy z nich
-// je aktualny config, druhy obsahuje take hodnoty ake uzivatel prave vyplnil
-// na stranke. Po skonceni tejto funkcie, configManager odosle stav configu
-// naspat na webstranku a ten sa zobrazi pouzivatelovy. Teda keby tato funkcia
-// trvala dlhsie, tak tlacitko by nacitavalo dlhsie.
-void log_data_on_click(Config* current_config, Config* new_config) {
-    // Vypiseme danu hodnotu do Serialu. (To je pointa tejto ukazkovej funkcie.
-    // aby sme si ukazali ako sa daju volat ine veci tlacitkami ako len
-    // ukladanie configu do EEPROM) Po dokonceni tejto funkcie, config manager
-    // posle aktualny stav configu naspat do prehliadaca a tam sa nastavy ako
-    // aktualny. Kedze sme nezmenili `current_config`, tak sa nam vsetok text v
-    // `data_to_log` strati. Toto je ale to co v tomto pripade chceme. Chceme
-    // aby sa po stlaceni tlacidla jeho parametre naspat vynulovali. Pokial by
-    // sme to nechceli, tak musime nastavit aktualny config na ten novy. To by
-    // vyzeralo takto: *current_config = *new_config;
-    Serial.println(new_config->data_to_log);
-}
-
-const char* ssid = SSID;
-const char* password = PASSWORD;
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
 
 void setup() {
     // Najprv inicializujeme serial, aby sme mohli vydiet vsetky chybove hlasky
@@ -123,10 +101,6 @@ void setup() {
     // zavolani init, uz mozeme pouzivat hodnoty z configManageru. Mohlo by tam
     // byt teda aj prihlasenie na WiFi napriklad.
     configManager.init(defaultConfig, "", "");
-    // Tieto dva riadky nastavia funkcie ktore sa maju zavolat po stlaceni
-    // daneho tlacitka. Toto prve tlacitko sme si uz presli. Iba vypise aktualnu
-    // hodnotu v `data_to_log` do serialu.
-    configManager.buttons.log_data.on_click = log_data_on_click;
     // Tuto nastavime funkciu pre tlacitko na ulozenie configu. Tato funkcia je
     // zabudovana do config manageru, teda ju nemusime programovat. Vola sa
     // `config_save_builtin`. Keby chceme robit nieco specialne pri ukladani
@@ -155,7 +129,7 @@ void setup() {
     Serial.println(WiFi.localIP());
 
     // Tymto riadkom zapneme webserver ktory bude cakat a odpovedat klientom
-    // configManager.start();
+    configManager.start();
 
     // ---------------------------------------------------------------------
     // !! Nasleduje ukazka pouzivania. Toto netreba davat do setupu. Je to len
@@ -170,10 +144,14 @@ void setup() {
     configManager.save();
 }
 
-long lastMillis = 0;
+static uint32_t lastHeap = 0;
+
 void loop() {
-    if (millis() - lastMillis > 1000) {
-        lastMillis = millis();
-        Serial.println(configManager.config.id);
+    uint32_t now = millis();
+    if (now - lastHeap >= 2000) {
+        uint32_t heap = ESP.getFreeHeap();
+        Serial.printf("Free heap: %" PRIu32 "\n", heap);
+        configManager.printf("Free heap: %" PRIu32 "\n", heap);
+        lastHeap = now;
     }
 }

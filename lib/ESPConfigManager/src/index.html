@@ -1,163 +1,590 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ESP Config Manager</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.colors.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/notyf@3/notyf.min.css"
+    />
+    <style>
+      /* Layout & Resizing */
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        /* Prevent global scroll on desktop */
+      }
 
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ESP Config Manager</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.colors.min.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/notyf@3/notyf.min.css">
-  <style>
-    main {
-      margin-top: 2rem;
-    }
-  </style>
+      #app {
+        height: 100%;
+        width: 100%;
+      }
 
-</head>
+      .split-container {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        width: 100%;
+      }
 
-<body>
-  <script src="https://cdn.jsdelivr.net/npm/notyf@3/notyf.min.js"></script>
-  <script type="module">
-    import {h, render} from 'https://esm.sh/preact';
-    import {useState, useEffect} from 'https://esm.sh/preact/hooks';
+      .pane-config {
+        padding: 1rem;
+        overflow-y: auto;
+        background-color: var(--pico-background-color);
+      }
 
-    const baseUrl = window.location.protocol === 'file:' ? 'http://192.168.88.92' : '';
+      .pane-logs {
+        display: flex;
+        flex-direction: column;
+        background-color: #111;
+        color: #eee;
+        font-family: "Menlo", "Monaco", "Courier New", monospace;
+        font-size: 0.85rem;
+        overflow: hidden;
+        /* Inner scroll handled by log-list */
+        border-top: 1px solid var(--pico-muted-border-color);
+      }
 
-    const notyf = new Notyf();
+      .log-header {
+        padding: 0.5rem 1rem;
+        background-color: #222;
+        border-bottom: 1px solid #333;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-shrink: 0;
+      }
 
-    function ButtonField({field, config, setConfig, change}) {
-      const [loading, setLoading] = useState(false);
+      .log-header h3 {
+        margin: 0;
+        font-size: 1rem;
+        color: #fff;
+      }
 
-      async function handleClick() {
-        setLoading(true);
-        const resp = await fetch(baseUrl + '/event', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            name: field.name,
-            event: 'click',
-            config: config.reduce((acc, field) => {
-              acc[field.name] = field.value;
-              return acc;
-            }, {})
-          })
-        });
+      .log-controls button {
+        padding: 0.2rem 0.5rem;
+        font-size: 0.75rem;
+        margin-left: 0.5rem;
+        width: auto;
+        display: inline-block;
+      }
 
-        if (resp.ok) {
-          const newConfig = await resp.json();
-          setConfig(newConfig);
-          setLoading(false);
-          notyf.success('Event sent successfully');
-        } else {
-          alert('Failed to send event');
+      .log-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0.5rem 1rem;
+        scroll-behavior: smooth;
+      }
+
+      .log-entry {
+        white-space: pre-wrap;
+        word-break: break-all;
+        margin-bottom: 0.2rem;
+        line-height: 1.4;
+        border-bottom: 1px solid #222;
+        padding-bottom: 0.2rem;
+      }
+
+      .log-entry:last-child {
+        border-bottom: none;
+      }
+
+      .log-timestamp {
+        color: #888;
+        margin-right: 0.5rem;
+      }
+
+      /* Resizer */
+      .resizer {
+        display: none;
+        background-color: var(--pico-muted-border-color);
+        z-index: 10;
+        transition: background-color 0.2s;
+      }
+
+      /* Desktop Layout */
+      @media (min-width: 768px) {
+        .split-container {
+          flex-direction: row;
+        }
+
+        .pane-config {
+          height: 100%;
+          /* Width controlled by JS */
+        }
+
+        .pane-logs {
+          height: 100%;
+          flex: 1;
+          border-top: none;
+          border-left: 1px solid var(--pico-muted-border-color);
+        }
+
+        .resizer {
+          display: block;
+          width: 6px;
+          cursor: col-resize;
+          height: 100%;
+          margin: 0 -3px;
+          /* Center over border */
+          position: relative;
+          z-index: 20;
+          background-color: transparent;
+          /* Invisible hit area */
+        }
+
+        .resizer::after {
+          content: "";
+          position: absolute;
+          left: 2px;
+          top: 0;
+          bottom: 0;
+          width: 2px;
+          background-color: var(--pico-muted-border-color);
+        }
+
+        .resizer:hover::after,
+        .resizer.active::after {
+          background-color: var(--pico-primary);
         }
       }
 
-      const title = field.options.title || field.name;
+      /* Mobile Layout */
+      @media (max-width: 767px) {
+        html,
+        body {
+          overflow: auto;
+          /* Allow global scroll */
+        }
 
-      return h('button', {type: 'submit', role: 'button', onclick: handleClick, ariaBusy: loading, disabled: loading}, title);
-    }
+        .split-container {
+          height: auto;
+          display: block;
+        }
 
-    function Field({field, config, setConfig, change}) {
+        .pane-config {
+          width: 100% !important;
+          height: auto;
+          overflow: visible;
+        }
 
-      if (field.type === 'button') {
-        return h(ButtonField, {field, config, setConfig, change});
+        .pane-logs {
+          width: 100% !important;
+          height: 500px;
+          /* Fixed height for logs area */
+        }
       }
 
-      if (field.type === 'int' || field.type === 'float') {
-        const hasRange = field.options.min !== undefined && field.options.max !== undefined;
-        const hasSlider = hasRange && !field.options.hide_slider;
-        const numericChange = (value) => {
-          if (field.type === 'int') {
-            value = parseInt(value);
-          } else {
-            value = parseFloat(value);
+      /* Utility */
+      .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.5);
+        color: white;
+        z-index: 1000;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="app"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/notyf@3/notyf.min.js"></script>
+    <script type="module">
+      import { h, render, Fragment } from "https://esm.sh/preact";
+      import {
+        useState,
+        useEffect,
+        useRef,
+        useCallback,
+      } from "https://esm.sh/preact/hooks";
+
+      const baseUrl =
+        window.location.protocol === "file:" ? "http://192.168.88.179" : "";
+      const notyf = new Notyf({ position: { x: "right", y: "top" } });
+
+      // --- Components ---
+
+      function ButtonField({ field, config, setConfig }) {
+        const [loading, setLoading] = useState(false);
+
+        async function handleClick() {
+          setLoading(true);
+          try {
+            const resp = await fetch(baseUrl + "/event", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: field.name,
+                event: "click",
+                config: config.reduce((acc, field) => {
+                  acc[field.name] = field.value;
+                  return acc;
+                }, {}),
+              }),
+            });
+
+            if (resp.ok) {
+              const newConfig = await resp.json();
+              setConfig(newConfig);
+              notyf.success("Event sent successfully");
+            } else {
+              notyf.error("Failed to send event");
+            }
+          } catch (e) {
+            notyf.error("Error sending event: " + e.message);
+          } finally {
+            setLoading(false);
           }
-          change(value);
-        };
-        return h('label', null,
-          field.options.title || field.name,
-          hasRange && h('small', {class: 'pico-color-grey-500'}, ` (${field.options.min} - ${field.options.max})`),
-          h('input', {
-            type: 'number', name: field.name, min: field.options.min, max: field.options.max, step: field.options.step, value: field.value,
-            style: hasSlider ? 'margin-bottom: 0' : '',
-            onchange: (e) => numericChange(e.target.value)
-          }),
-          hasSlider && h('input', {
-            type: 'range', name: field.name, min: field.options.min, max: field.options.max, step: field.options.step, value: field.value,
-            sytle: 'margin-bottom: var(--pico-spacing)',
-            oninput: (e) => numericChange(e.target.value)
-          }),
-          h('small', null, field.options.description)
-        );
-      }
-
-      if (field.type === 'string') {
-        return h('label', null,
-          field.options.title || field.name,
-          h('input', {type: 'text', name: field.name, class: 'form-control', value: field.value, onchange: (e) => change(e.target.value)}),
-          h('small', null, field.options.description)
-        );
-      }
-
-      if (field.type === 'bool') {
-        return h('fieldset', null,
-          h('label', null,
-            h('input', {type: 'checkbox', name: field.name, role: "switch", checked: field.value, onchange: (e) => change(e.target.checked)}),
-            field.options.title || field.name,
-            h('small', {style: 'margin-top: 0em; margin-left: 0.1em;'}, field.options.description)
-          )
-        );
-      }
-
-      return h('div', null, "Unknown field type: ", field.type);
-    }
-
-    function App() {
-      const [config, setConfig] = useState(null);
-      const [loading, setLoading] = useState(true);
-
-      useEffect(() => {
-        async function fetchData() {
-          const response = await fetch(baseUrl + '/config');
-          const data = await response.json();
-          setConfig(data);
-          setLoading(false);
         }
-        fetchData();
-      }, []);
 
-      const handleChange = (index, value) => {
-        const newConfig = [...config];
-        newConfig[index].value = value;
-        setConfig(newConfig);
-      };
-
-      if (loading) {
-        return h('main', {class: 'container'}, h('h1', null, 'Loading...'));
+        const title = field.options.title || field.name;
+        return h(
+          "button",
+          {
+            type: "button",
+            onclick: handleClick,
+            ariaBusy: loading,
+            disabled: loading,
+          },
+          title,
+        );
       }
 
-      return h('main', {class: 'container'},
-        h('h1', null, 'Configuration'),
-        h('form', {onsubmit: (e) => e.preventDefault()},
-          config.map((field, index) =>
-            h(Field, {
-              field,
-              config,
-              setConfig,
-              change: (value) => handleChange(index, value)
-            })
-          )
-        )
-      );
-    }
+      function Field({ field, config, setConfig, change }) {
+        if (field.type === "button") {
+          return h(ButtonField, { field, config, setConfig });
+        }
 
-    render(h(App, null), document.body);
-  </script>
+        if (field.type === "int" || field.type === "float") {
+          const hasRange =
+            field.options.min !== undefined && field.options.max !== undefined;
+          const hasSlider = hasRange && !field.options.hide_slider;
+          const numericChange = (valStr) => {
+            let value;
+            if (field.type === "int") value = parseInt(valStr);
+            else value = parseFloat(valStr);
 
-</body>
+            // Avoid updating if invalid or unchanged to prevent cursor jumping/decimal loss
+            if (isNaN(value)) return;
+            if (value === field.value) return;
 
+            change(value);
+          };
+          return h(
+            "label",
+            null,
+            field.options.title || field.name,
+            hasRange &&
+              h(
+                "small",
+                { class: "pico-color-grey-500" },
+                ` (${field.options.min} - ${field.options.max})`,
+              ),
+            h("input", {
+              type: "number",
+              name: field.name,
+              min: field.options.min,
+              max: field.options.max,
+              step: field.options.step,
+              value: field.value,
+              style: hasSlider ? "margin-bottom: 0" : "",
+              oninput: (e) => numericChange(e.target.value),
+            }),
+            hasSlider &&
+              h("input", {
+                type: "range",
+                name: field.name,
+                min: field.options.min,
+                max: field.options.max,
+                step: field.options.step,
+                value: field.value,
+                style: "margin-bottom: var(--pico-spacing)",
+                oninput: (e) => numericChange(e.target.value),
+              }),
+            h("small", null, field.options.description),
+          );
+        }
+
+        if (field.type === "string") {
+          return h(
+            "label",
+            null,
+            field.options.title || field.name,
+            h("input", {
+              type: "text",
+              name: field.name,
+              value: field.value,
+              oninput: (e) => change(e.target.value),
+            }),
+            h("small", null, field.options.description),
+          );
+        }
+
+        if (field.type === "bool") {
+          return h(
+            "fieldset",
+            null,
+            h(
+              "label",
+              null,
+              h("input", {
+                type: "checkbox",
+                name: field.name,
+                role: "switch",
+                checked: field.value,
+                onchange: (e) => change(e.target.checked),
+              }),
+              field.options.title || field.name,
+              h(
+                "small",
+                {
+                  style:
+                    "display: block; margin-top: 0.2em; color: var(--pico-muted-color)",
+                },
+                field.options.description,
+              ),
+            ),
+          );
+        }
+
+        return h("div", null, "Unknown field type: ", field.type);
+      }
+
+      function ConfigPane() {
+        const [config, setConfig] = useState(null);
+        const [loading, setLoading] = useState(true);
+
+        useEffect(() => {
+          async function fetchData() {
+            try {
+              const response = await fetch(baseUrl + "/config");
+              if (!response.ok) throw new Error("Failed to load config");
+              const data = await response.json();
+              setConfig(data);
+            } catch (e) {
+              notyf.error(e.message);
+            } finally {
+              setLoading(false);
+            }
+          }
+          fetchData();
+        }, []);
+
+        const handleChange = useCallback((index, value) => {
+          setConfig((prevConfig) => {
+            const newConfig = [...prevConfig];
+            newConfig[index] = { ...newConfig[index], value };
+            return newConfig;
+          });
+        }, []);
+
+        if (loading) {
+          return h(
+            "div",
+            { class: "loading-overlay" },
+            h("h2", null, "Loading Configuration..."),
+          );
+        }
+
+        return h(
+          Fragment,
+          null,
+          h(
+            "hgroup",
+            null,
+            h("h1", null, "Configuration"),
+            h("p", null, "Manage your ESP device settings"),
+          ),
+          config
+            ? h(
+                "form",
+                { onsubmit: (e) => e.preventDefault() },
+                config.map((field, index) =>
+                  h(Field, {
+                    field,
+                    config,
+                    setConfig,
+                    change: (value) => handleChange(index, value),
+                  }),
+                ),
+              )
+            : h("p", null, "No configuration loaded."),
+        );
+      }
+
+      function LogViewer() {
+        const [logs, setLogs] = useState([]);
+        const listRef = useRef(null);
+        const [autoScroll, setAutoScroll] = useState(true);
+
+        useEffect(() => {
+          const es = new EventSource(baseUrl + "/logs");
+          let buffer = [];
+
+          es.onmessage = (e) => {
+            buffer.push({
+              msg: e.data,
+              time: new Date().toLocaleTimeString(),
+            });
+          };
+
+          es.onerror = (e) => {
+            // console.error("EventSource failed:", e);
+          };
+
+          const interval = setInterval(() => {
+            if (buffer.length > 0) {
+              setLogs((prev) => {
+                const newLogs = [...prev, ...buffer];
+                buffer = [];
+                return newLogs.slice(-1000);
+              });
+            }
+          }, 200);
+
+          return () => {
+            es.close();
+            clearInterval(interval);
+          };
+        }, []);
+
+        // Auto-scroll logic
+        useEffect(() => {
+          if (autoScroll && listRef.current) {
+            const el = listRef.current;
+            requestAnimationFrame(() => {
+              el.scrollTop = el.scrollHeight;
+            });
+          }
+        }, [logs, autoScroll]);
+
+        const handleScroll = () => {
+          if (!listRef.current) return;
+          const { scrollTop, scrollHeight, clientHeight } = listRef.current;
+          const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+          if (!isAtBottom && autoScroll) {
+            setAutoScroll(false);
+          } else if (isAtBottom && !autoScroll) {
+            setAutoScroll(true);
+          }
+        };
+
+        return h(
+          "div",
+          { class: "pane-logs" },
+          h(
+            "div",
+            { class: "log-header" },
+            h("h3", null, "Device Logs"),
+            h(
+              "div",
+              { class: "log-controls" },
+              h(
+                "button",
+                {
+                  class: "outline contrast",
+                  onclick: () => setAutoScroll(!autoScroll),
+                },
+                autoScroll ? "Auto-scroll: ON" : "Auto-scroll: OFF",
+              ),
+              h(
+                "button",
+                {
+                  class: "outline secondary",
+                  onclick: () => setLogs([]),
+                },
+                "Clear",
+              ),
+            ),
+          ),
+          h(
+            "div",
+            { class: "log-list", ref: listRef, onscroll: handleScroll },
+            logs.length === 0 &&
+              h(
+                "div",
+                { style: "color: #666; text-align: center; padding: 2rem;" },
+                "Waiting for logs...",
+              ),
+            logs.map((log, i) =>
+              h(
+                "div",
+                { key: i, class: "log-entry" },
+                h("span", { class: "log-timestamp" }, log.time),
+                log.msg,
+              ),
+            ),
+          ),
+        );
+      }
+
+      function App() {
+        const [leftWidth, setLeftWidth] = useState(50);
+        const [isResizing, setIsResizing] = useState(false);
+
+        const startResizing = useCallback((e) => {
+          e.preventDefault();
+          setIsResizing(true);
+        }, []);
+
+        useEffect(() => {
+          if (!isResizing) return;
+
+          const onMouseMove = (e) => {
+            const newWidth = (e.clientX / window.innerWidth) * 100;
+            if (newWidth > 20 && newWidth < 80) {
+              setLeftWidth(newWidth);
+            }
+          };
+
+          const onMouseUp = () => {
+            setIsResizing(false);
+          };
+
+          window.addEventListener("mousemove", onMouseMove);
+          window.addEventListener("mouseup", onMouseUp);
+
+          return () => {
+            window.removeEventListener("mousemove", onMouseMove);
+            window.removeEventListener("mouseup", onMouseUp);
+          };
+        }, [isResizing]);
+
+        return h(
+          "div",
+          { class: "split-container" },
+          h(
+            "div",
+            { class: "pane-config", style: `width: ${leftWidth}%` },
+            h(ConfigPane, null),
+          ),
+          h("div", {
+            class: `resizer ${isResizing ? "active" : ""}`,
+            onmousedown: startResizing,
+          }),
+          h(LogViewer, null),
+        );
+      }
+
+      render(h(App, null), document.getElementById("app"));
+    </script>
+  </body>
 </html>

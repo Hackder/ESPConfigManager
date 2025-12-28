@@ -6,7 +6,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 
 #define string String
 
@@ -462,11 +461,13 @@ void config_save_builtin(Config* current_config, Config* new_config) {
     }
 }
 
+static int index_page_size = strlen_P(IndexPage);
+
 class ESPConfigManager {
     AsyncWebServer server = {80};
     AsyncAuthenticationMiddleware auth;
-
-    bool authenticate = false;
+    AsyncCorsMiddleware cors;
+    AsyncEventSource events = {"/logs"};
 
   public:
     ESPConfigManager() {};
@@ -476,9 +477,9 @@ class ESPConfigManager {
     bool init(Config defaultConfig, const char* username, const char* password,
               const size_t eeprom_size = 1024) {
 
-        this->authenticate = strlen(username) > 0 && strlen(password) > 0;
+        bool authenticate = strlen(username) > 0 && strlen(password) > 0;
 
-        if (this->authenticate) {
+        if (authenticate) {
             this->auth.setUsername(username);
             this->auth.setPassword(password);
             this->auth.setRealm("ESPConfigManager");
@@ -486,6 +487,11 @@ class ESPConfigManager {
             this->auth.setAuthType(AsyncAuthType::AUTH_BASIC);
             this->auth.generateHash();
         }
+
+        this->cors.setOrigin("*");
+        this->cors.setMethods("POST, GET, OPTIONS, DELETE");
+        this->cors.setAllowCredentials(true);
+        this->cors.setMaxAge(0);
 
         bool result = EEPROM.begin(eeprom_size);
         if (!result) {
@@ -519,22 +525,23 @@ class ESPConfigManager {
     }
 
     void start() {
-        int index_page_size = strlen(IndexPage);
+        server.addMiddleware(&this->cors);
+
         server
             .on("/", HTTP_GET,
-                [index_page_size](AsyncWebServerRequest* request) {
+                [](AsyncWebServerRequest* request) {
                     request->send(200, "text/html", (uint8_t*)IndexPage,
                                   index_page_size);
                 })
             .addMiddleware(&this->auth);
 
-        // server
-        //     .on("/config", HTTP_GET,
-        //         [this](AsyncWebServerRequest* request) {
-        //             request->send(200, "application/json",
-        //                           config_to_json(&this->config));
-        //         })
-        //     .addMiddleware(&this->auth);
+        server
+            .on("/config", HTTP_GET,
+                [this](AsyncWebServerRequest* request) {
+                    request->send(200, "application/json",
+                                  config_to_json(&this->config));
+                })
+            .addMiddleware(&this->auth);
 
         // server
         //     .on("/event", HTTP_OPTIONS,
@@ -547,65 +554,55 @@ class ESPConfigManager {
         //         })
         //     .addMiddleware(&this->auth);
 
-        // server
-        //     .on("/event", HTTP_POST,
-        //         [this](AsyncWebServerRequest* request) {
-        //             // Accepts an object of the form: {"name"; "button_name",
-        //             // "event": "click", "config": {...}}
-        //
-        //             JsonDocument doc;
-        //             DeserializationError error =
-        //                 deserializeJson(doc, request->arg("plain"));
-        //             if (error) {
-        //                 request->send(400, "application/json",
-        //                               "{\"error\": \"Invalid JSON\"}");
-        //                 return;
-        //             }
-        //
-        //             if (!doc["name"].is<JsonString>() ||
-        //                 !doc["event"].is<JsonString>() ||
-        //                 !doc["config"].is<JsonObject>()) {
-        //                 request->send(400, "application/json",
-        //                               "{\"error\": \"Invalid required
-        //                               keys\"}");
-        //                 return;
-        //             }
-        //
-        //             const String name = doc["name"];
-        //             const String event = doc["event"];
-        //
-        //             if (event != "click") {
-        //                 request->send(400, "application/json",
-        //                               "{\"error\": \"Invalid event\"}");
-        //                 return;
-        //             }
-        //
-        //             ButtonEvents* events =
-        //                 config_get_button_events(&this->buttons,
-        //                 name.c_str());
-        //
-        //             if (events == nullptr) {
-        //                 request->send(400, "application/json",
-        //                               "{\"error\": \"Invalid button
-        //                               name\"}");
-        //                 return;
-        //             }
-        //
-        //             if (events->on_click) {
-        //                 Config new_config = {};
-        //
-        //                 config_load_from_json(&new_config, doc["config"]);
-        //
-        //                 events->on_click(&this->config, &new_config);
-        //             } else {
-        //                 config_manager_log("No event handler for button " +
-        //                                    name);
-        //             }
-        //
-        //             request->send(200, "application/json",
-        //                           config_to_json(&this->config));
-        //         })
-        //     .addMiddleware(&this->auth);
+        server
+            .on("/event", HTTP_POST,
+                [this](AsyncWebServerRequest* request, JsonVariant& doc) {
+                    // Accepts an object of the form: {"name"; "button_name",
+                    // "event": "click", "config": {...}}
+
+                    if (!doc["name"].is<JsonString>() ||
+                        !doc["event"].is<JsonString>() ||
+                        !doc["config"].is<JsonObject>()) {
+                        request->send(400, "application/json",
+                                      "{\"error\": \"Invalid required keys\"}");
+                        return;
+                    }
+
+                    const String name = doc["name"];
+                    const String event = doc["event"];
+
+                    if (event != "click") {
+                        request->send(400, "application/json",
+                                      "{\"error\": \"Invalid event\"}");
+                        return;
+                    }
+
+                    ButtonEvents* events =
+                        config_get_button_events(&this->buttons, name.c_str());
+
+                    if (events == nullptr) {
+                        request->send(400, "application/json",
+                                      "{\"error\": \"Invalid button name\"}");
+                        return;
+                    }
+
+                    if (events->on_click) {
+                        Config new_config = {};
+
+                        config_load_from_json(&new_config, doc["config"]);
+
+                        events->on_click(&this->config, &new_config);
+                    } else {
+                        config_manager_log("No event handler for button " +
+                                           name);
+                    }
+
+                    request->send(200, "application/json",
+                                  config_to_json(&this->config));
+                })
+            .addMiddleware(&this->auth);
+
+        this->server.addHandler(&this->events);
 
         // Setup the server
         // server.on("/", HTTP_GET, [this]() {
@@ -705,6 +702,19 @@ class ESPConfigManager {
         // server.begin();
 
         server.begin();
+    }
+
+    void println(const String& message) {
+        events.send(message.c_str());
+    }
+
+    void printf(const char* format, ...) {
+        va_list args;
+        va_start(args, format);
+        char buffer[512];
+        vsnprintf(buffer, sizeof(buffer), format, args);
+        va_end(args);
+        events.send(buffer);
     }
 
     void save() {
