@@ -4,3 +4,4 @@ compile_commands.json
 .DS_Store
 .cache
 src/ssid_pass.h
+scripts/.venv

@@ -47,8 +47,8 @@
       .pane-logs {
         display: flex;
         flex-direction: column;
-        background-color: #111;
-        color: #eee;
+        background-color: var(--pico-card-background-color);
+        color: var(--pico-color);
         font-family: "Menlo", "Monaco", "Courier New", monospace;
         font-size: 0.85rem;
         overflow: hidden;
@@ -58,8 +58,8 @@
 
       .log-header {
         padding: 0.5rem 1rem;
-        background-color: #222;
-        border-bottom: 1px solid #333;
+        background-color: var(--pico-card-sectioning-background-color);
+        border-bottom: 1px solid var(--pico-muted-border-color);
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -69,7 +69,7 @@
       .log-header h3 {
         margin: 0;
         font-size: 1rem;
-        color: #fff;
+        color: var(--pico-color);
       }
 
       .log-controls button {
@@ -92,7 +92,7 @@
         word-break: break-all;
         margin-bottom: 0.2rem;
         line-height: 1.4;
-        border-bottom: 1px solid #222;
+        border-bottom: 1px solid var(--pico-muted-border-color);
         padding-bottom: 0.2rem;
       }
 
@@ -101,7 +101,7 @@
       }
 
       .log-timestamp {
-        color: #888;
+        color: var(--pico-muted-color);
         margin-right: 0.5rem;
       }
 
@@ -521,7 +521,10 @@
             logs.length === 0 &&
               h(
                 "div",
-                { style: "color: #666; text-align: center; padding: 2rem;" },
+                {
+                  style:
+                    "color: var(--pico-muted-color); text-align: center; padding: 2rem;",
+                },
                 "Waiting for logs...",
               ),
             logs.map((log, i) =>
